@@ -3,27 +3,40 @@ package server
 import (
 	"crypto/tls"
 
+	"github.com/gorilla/mux"
 	grpc_middleware "github.com/grpc-ecosystem/go-grpc-middleware"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials"
-	healthpb "google.golang.org/grpc/health/grpc_health_v1"
-
-	"github.com/zitadel/zitadel/internal/api/authz"
+	internal_authz "github.com/zitadel/zitadel/internal/api/authz"
 	grpc_api "github.com/zitadel/zitadel/internal/api/grpc"
 	"github.com/zitadel/zitadel/internal/api/grpc/server/middleware"
+	http_mw "github.com/zitadel/zitadel/internal/api/http/middleware"
 	"github.com/zitadel/zitadel/internal/logstore"
 	"github.com/zitadel/zitadel/internal/logstore/record"
 	"github.com/zitadel/zitadel/internal/query"
 	"github.com/zitadel/zitadel/internal/telemetry/metrics"
 	system_pb "github.com/zitadel/zitadel/pkg/grpc/system"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
+	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 )
 
+type NewServerOptions struct {
+	EnableReflection  bool
+	Port              uint16
+	Router            *mux.Router
+	Queries           *query.Queries
+	Verifier          *internal_authz.TokenVerifier
+	AuthZ             internal_authz.Config
+	TLSConfig         *tls.Config
+	HTTP2HostName     string
+	HTTP1HostName     string
+	AccessInterceptor *http_mw.AccessInterceptor
+}
 type Server interface {
 	RegisterServer(*grpc.Server)
 	RegisterGateway() RegisterGatewayFunc
 	AppName() string
 	MethodPrefix() string
-	AuthMethods() authz.MethodMapping
+	AuthMethods() internal_authz.MethodMapping
 }
 
 // WithGatewayPrefix extends the server interface with a prefix for the grpc gateway
@@ -35,8 +48,8 @@ type WithGatewayPrefix interface {
 }
 
 func CreateServer(
-	verifier *authz.TokenVerifier,
-	authConfig authz.Config,
+	verifier *internal_authz.TokenVerifier,
+	authConfig internal_authz.Config,
 	queries *query.Queries,
 	hostHeaderName string,
 	tlsConfig *tls.Config,

@@ -50,6 +50,8 @@ ExternalDomain: localhost # ZITADEL_EXTERNALDOMAIN
 # but TLS traffic is terminated on a reverse proxy
 # !!! Changing this after the initial setup breaks your system !!!
 ExternalSecure: true # ZITADEL_EXTERNALSECURE
+# specifies if ZITADEL gRPC api services have reflection enabled
+EnableGRPCReflection: false # ZITADEL_ENABLEGRPCREFLECTION
 TLS:
   # If enabled, ZITADEL will serve all traffic over TLS (HTTPS and gRPC)
   # you must then also provide a private key and certificate to be used for the connection

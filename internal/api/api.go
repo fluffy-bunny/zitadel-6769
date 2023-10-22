@@ -12,10 +12,9 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/health"
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
-	"google.golang.org/grpc/reflection"
 
 	internal_authz "github.com/zitadel/zitadel/internal/api/authz"
-	"github.com/zitadel/zitadel/internal/api/grpc/server"
+	zitadel_grpc_server "github.com/zitadel/zitadel/internal/api/grpc/server"
 	http_util "github.com/zitadel/zitadel/internal/api/http"
 	http_mw "github.com/zitadel/zitadel/internal/api/http/middleware"
 	"github.com/zitadel/zitadel/internal/api/ui/login"
@@ -23,6 +22,7 @@ import (
 	"github.com/zitadel/zitadel/internal/query"
 	"github.com/zitadel/zitadel/internal/telemetry/metrics"
 	"github.com/zitadel/zitadel/internal/telemetry/tracing"
+	grpc_reflection "google.golang.org/grpc/reflection"
 )
 
 type API struct {
@@ -32,7 +32,7 @@ type API struct {
 	health            healthCheck
 	router            *mux.Router
 	http1HostName     string
-	grpcGateway       *server.Gateway
+	grpcGateway       *zitadel_grpc_server.Gateway
 	healthServer      *health.Server
 	accessInterceptor *http_mw.AccessInterceptor
 	queries           *query.Queries
@@ -42,6 +42,31 @@ type healthCheck interface {
 	Health(ctx context.Context) error
 }
 
+func NewWithOptions(ctx context.Context, options *zitadel_grpc_server.NewServerOptions) (_ *API, err error) {
+	api := &API{
+		port:              options.Port,
+		verifier:          options.Verifier,
+		health:            options.Queries,
+		router:            options.Router,
+		http1HostName:     options.HTTP1HostName,
+		queries:           options.Queries,
+		accessInterceptor: options.AccessInterceptor,
+	}
+
+	api.grpcServer = zitadel_grpc_server.CreateServer(api.verifier, options.AuthZ, options.Queries, options.HTTP2HostName, options.TLSConfig, options.AccessInterceptor.AccessService())
+	api.grpcGateway, err = zitadel_grpc_server.CreateGateway(ctx, options.Port, options.HTTP1HostName, options.AccessInterceptor)
+	if err != nil {
+		return nil, err
+	}
+	api.registerHealthServer()
+
+	api.RegisterHandlerOnPrefix("/debug", api.healthHandler())
+	api.router.Handle("/", http.RedirectHandler(login.HandlerPrefix, http.StatusFound))
+	if options.EnableReflection {
+		grpc_reflection.Register(api.grpcServer)
+	}
+	return api, nil
+}
 func New(
 	ctx context.Context,
 	port uint16,
@@ -52,37 +77,26 @@ func New(
 	tlsConfig *tls.Config, http2HostName, http1HostName string,
 	accessInterceptor *http_mw.AccessInterceptor,
 ) (_ *API, err error) {
-	api := &API{
-		port:              port,
-		verifier:          verifier,
-		health:            queries,
-		router:            router,
-		http1HostName:     http1HostName,
-		queries:           queries,
-		accessInterceptor: accessInterceptor,
-	}
-
-	api.grpcServer = server.CreateServer(api.verifier, authZ, queries, http2HostName, tlsConfig, accessInterceptor.AccessService())
-	api.grpcGateway, err = server.CreateGateway(ctx, port, http1HostName, accessInterceptor)
-	if err != nil {
-		return nil, err
-	}
-	api.registerHealthServer()
-
-	api.RegisterHandlerOnPrefix("/debug", api.healthHandler())
-	api.router.Handle("/", http.RedirectHandler(login.HandlerPrefix, http.StatusFound))
-
-	reflection.Register(api.grpcServer)
-	return api, nil
+	return NewWithOptions(ctx, &zitadel_grpc_server.NewServerOptions{
+		Port:              port,
+		Router:            router,
+		Queries:           queries,
+		Verifier:          verifier,
+		AuthZ:             authZ,
+		TLSConfig:         tlsConfig,
+		HTTP2HostName:     http2HostName,
+		HTTP1HostName:     http1HostName,
+		AccessInterceptor: accessInterceptor,
+	})
 }
 
 // RegisterServer registers a grpc service on the grpc server,
 // creates a new grpc gateway and registers it as a separate http handler
 //
 // used for v1 api (system, admin, mgmt, auth)
-func (a *API) RegisterServer(ctx context.Context, grpcServer server.WithGatewayPrefix) error {
+func (a *API) RegisterServer(ctx context.Context, grpcServer zitadel_grpc_server.WithGatewayPrefix) error {
 	grpcServer.RegisterServer(a.grpcServer)
-	handler, prefix, err := server.CreateGatewayWithPrefix(
+	handler, prefix, err := zitadel_grpc_server.CreateGatewayWithPrefix(
 		ctx,
 		grpcServer,
 		a.port,
@@ -103,9 +117,9 @@ func (a *API) RegisterServer(ctx context.Context, grpcServer server.WithGatewayP
 // and its gateway on the gateway handler
 //
 // used for >= v2 api (e.g. user, session, ...)
-func (a *API) RegisterService(ctx context.Context, grpcServer server.Server) error {
+func (a *API) RegisterService(ctx context.Context, grpcServer zitadel_grpc_server.Server) error {
 	grpcServer.RegisterServer(a.grpcServer)
-	err := server.RegisterGateway(ctx, a.grpcGateway, grpcServer)
+	err := zitadel_grpc_server.RegisterGateway(ctx, a.grpcGateway, grpcServer)
 	if err != nil {
 		return err
 	}

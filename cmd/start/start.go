@@ -38,6 +38,7 @@ import (
 	"github.com/zitadel/zitadel/internal/api/grpc/management"
 	oidc_v2 "github.com/zitadel/zitadel/internal/api/grpc/oidc/v2"
 	"github.com/zitadel/zitadel/internal/api/grpc/org/v2"
+	zitadel_grpc_server "github.com/zitadel/zitadel/internal/api/grpc/server"
 	"github.com/zitadel/zitadel/internal/api/grpc/session/v2"
 	"github.com/zitadel/zitadel/internal/api/grpc/settings/v2"
 	"github.com/zitadel/zitadel/internal/api/grpc/system"
@@ -339,7 +340,21 @@ func startAPIs(
 		http_util.WithMaxAge(int(math.Floor(config.Quotas.Access.ExhaustedCookieMaxAge.Seconds()))),
 	)
 	limitingAccessInterceptor := middleware.NewAccessInterceptor(accessSvc, exhaustedCookieHandler, &config.Quotas.Access.AccessConfig)
-	apis, err := api.New(ctx, config.Port, router, queries, verifier, config.InternalAuthZ, tlsConfig, config.HTTP2HostHeader, config.HTTP1HostHeader, limitingAccessInterceptor)
+
+	newServerOptions := &zitadel_grpc_server.NewServerOptions{
+		EnableReflection:  config.EnableGRPCReflection,
+		Port:              config.Port,
+		Router:            router,
+		Queries:           queries,
+		Verifier:          verifier,
+		AuthZ:             config.InternalAuthZ,
+		TLSConfig:         tlsConfig,
+		HTTP2HostName:     config.HTTP2HostHeader,
+		HTTP1HostName:     config.HTTP1HostHeader,
+		AccessInterceptor: limitingAccessInterceptor,
+	}
+
+	apis, err := api.NewWithOptions(ctx, newServerOptions)
 	if err != nil {
 		return fmt.Errorf("error creating api %w", err)
 	}
